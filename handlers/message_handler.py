@@ -10,6 +10,7 @@ from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 import config
 from services import card_builder, feishu_api
+from handlers.resolve_handler import handle_resolve
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
         # 1. 只处理群消息（chat_type == "group"）
         # 2. 忽略机器人自身发送的消息
         if message.chat_type != "group":
-            logger.debug(f"忽略非群消息: chat_type={message.chat_type}")
+            logger.info(f"忽略非群消息: chat_type={message.chat_type}, chat_id={message.chat_id}")
             return
 
         if sender.sender_type == "app":
@@ -72,13 +73,42 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
             f"sender={sender_open_id}, content={msg_text[:50]}"
         )
 
+        # ── 归档触发检测：消息包含归档触发词 ──────────────────
+        # 服务群中 @机器人 + 触发词 → 启动归档流程
+        # 飞书会将 @消息 里的提及信息放入 mentions 字段
+        mentions = message.mentions or []
+        has_resolve_keyword = any(kw in msg_text for kw in config.RESOLVE_KEYWORDS)
+
+        if has_resolve_keyword and mentions:
+            logger.info(f"检测到归档触发: chat_id={chat_id}")
+            handle_resolve(chat_id, sender_open_id)
+            return
+
+        # ── 白名单群才触发创建服务群卡片 ──────────────────
+        if config.ALLOWED_CHAT_IDS and chat_id not in config.ALLOWED_CHAT_IDS:
+            logger.info(f"非白名单群，跳过卡片: chat_id={chat_id}")
+            return
+
         # 判断是否需要触发卡片
         if not _is_question(msg_text):
             logger.debug(f"消息不符合触发条件，跳过: {msg_text[:30]}")
             return
 
-        # 问题预览（截取前200字）
-        question_preview = msg_text[:200] + ("..." if len(msg_text) > 200 else "")
+        # 提取消息类型和图片 key
+        msg_type = message.message_type or "text"
+        image_key = ""
+        if msg_type == "image":
+            try:
+                content_obj = json.loads(message.content or "{}")
+                image_key = content_obj.get("image_key", "")
+            except Exception:
+                pass
+
+        # 问题预览
+        if msg_type == "image":
+            question_preview = "[用户发送了一张图片]"
+        else:
+            question_preview = msg_text[:200] + ("..." if len(msg_text) > 200 else "")
 
         # 构建卡片
         card_json = card_builder.build_question_card(
@@ -87,6 +117,7 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
             question_preview=question_preview,
             origin_message_id=message_id,
             chat_id=chat_id,
+            image_key=image_key,
         )
 
         # 发送卡片到群

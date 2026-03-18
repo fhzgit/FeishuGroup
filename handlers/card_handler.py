@@ -39,15 +39,27 @@ def handle_card_action(action_value: dict[str, Any], operator_open_id: str, card
             return _toast("info", "服务群已创建，请勿重复点击")
         _processed_messages.add(origin_message_id)
 
-    # 立即返回 toast（3秒限制内必须响应）
-    # 异步执行真正的创群逻辑
+    # 立即返回 toast + 处理中卡片（3秒限制内必须响应）
+    # 返回 processing_card 可让飞书立刻更新按钮为「创建中...」，避免 UI 闪回
+    asker_open_id = action_value.get("asker_open_id", "")
+    handler_open_ids = action_value.get("handler_open_ids", config.HANDLER_OPEN_IDS)
+    question_preview = action_value.get("question_preview", "")
+    processing_card = card_builder.build_processing_card(
+        asker_open_id=asker_open_id,
+        handler_open_ids=handler_open_ids,
+        question_preview=question_preview,
+    )
+
     threading.Thread(
         target=_async_create_group,
         args=(action_value, operator_open_id, card_message_id),
         daemon=True,
     ).start()
 
-    return _toast("info", "正在创建服务群，请稍候...")
+    return {
+        "toast": {"type": "info", "content": "正在创建服务群，请稍候..."},
+        "processing_card": processing_card,
+    }
 
 
 def _async_create_group(action_value: dict[str, Any], operator_open_id: str, card_message_id: str = "") -> None:
@@ -73,7 +85,7 @@ def _async_create_group(action_value: dict[str, Any], operator_open_id: str, car
     members = list({asker_open_id, operator_open_id, *handler_open_ids})
 
     # 1. 创建服务群
-    new_chat_id = feishu_api.create_service_chat(
+    new_chat_id, err_code, err_msg = feishu_api.create_service_chat(
         chat_name=chat_name,
         user_open_ids=members,
     )
@@ -91,18 +103,24 @@ def _async_create_group(action_value: dict[str, Any], operator_open_id: str, car
         # 3. 在新服务群发送欢迎消息
         welcome_text = (
             f"👋 欢迎来到服务群！\n\n"
-            f"📝 原始问题：\n{question_preview}\n\n"
-            f"本群由机器人自动创建，专门处理以上问题，请相关同学在此群进行沟通。"
+            f"本群由机器人自动创建，专门处理以下问题，请相关同学在此群进行沟通。\n\n"
+            f"📝 以下是原始问题内容："
         )
         feishu_api.send_text_message(new_chat_id, welcome_text)
+
+        # 4. 转发原始消息到服务群（保留图片等原始格式）
+        if origin_message_id:
+            feishu_api.forward_message(origin_message_id, new_chat_id)
         logger.info(f"服务群创建完成: new_chat_id={new_chat_id}")
     else:
-        # 创群失败，更新卡片为失败状态
+        # 根据错误码生成友好提示
+        friendly_msg = _get_friendly_error(err_code, err_msg)
+
         done_card = card_builder.build_done_card(
             asker_open_id=asker_open_id,
             handler_open_ids=handler_open_ids,
             question_preview=question_preview,
-            error_msg="API 调用失败，请联系管理员",
+            error_msg=friendly_msg,
         )
         feishu_api.update_card_message(card_message_id, done_card)
 
@@ -110,7 +128,28 @@ def _async_create_group(action_value: dict[str, Any], operator_open_id: str, car
         with _lock:
             _processed_messages.discard(origin_message_id)
 
-        logger.error("服务群创建失败")
+        logger.error(f"服务群创建失败: code={err_code}, msg={err_msg}")
+
+
+def _get_friendly_error(code: int, msg: str) -> str:
+    """根据飞书 API 错误码返回友好的中文提示"""
+    # 权限相关
+    if code == 99991672 or "Access denied" in msg or "scope" in msg.lower():
+        return "当前用户暂未开通使用权限，已通知开发人员处理"
+    # 用户不在机器人可见范围
+    if code == 232043 or "invisible" in msg.lower() or "unavailable ids" in msg.lower():
+        return "部分用户尚未开通该应用的使用权限，已通知开发人员处理"
+    # 成员无效（open_id 无效或用户不存在）
+    if code == 230001 or "invalid" in msg.lower():
+        return "部分成员信息无效，请联系管理员检查配置"
+    # 限频
+    if code == 230020 or "rate" in msg.lower() or "频" in msg:
+        return "操作过于频繁，请稍后再试"
+    # 机器人能力未开启
+    if code == 230006:
+        return "机器人能力未启用，已通知开发人员处理"
+    # 其他
+    return f"创建失败（错误码: {code}），已通知开发人员处理"
 
 
 def _toast(toast_type: str, content: str) -> dict:

@@ -43,11 +43,24 @@ QUESTION_KEYWORDS: list[str] = _get_list(
     "QUESTION_KEYWORDS", "?,？,请问,咨询,帮忙,怎么,如何,问一下"
 )
 
+# 允许触发的群聊 ID 列表（为空则允许所有群）
+ALLOWED_CHAT_IDS: list[str] = _get_list("ALLOWED_CHAT_IDS")
+
 # 服务群名称前缀
 SERVICE_GROUP_PREFIX: str = os.getenv("SERVICE_GROUP_PREFIX", "服务群")
 
 # 日志级别
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
+
+# ── 归档功能配置 ──────────────────────────────────────────
+# 多维表格
+BITABLE_APP_TOKEN: str = os.getenv("BITABLE_APP_TOKEN", "")
+BITABLE_TABLE_ID: str = os.getenv("BITABLE_TABLE_ID", "")
+
+# 归档触发词
+RESOLVE_KEYWORDS: list[str] = _get_list(
+    "RESOLVE_KEYWORDS", "问题已解决,已解决,问题解决"
+)
 
 
 def validate():

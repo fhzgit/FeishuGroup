@@ -100,12 +100,10 @@ def update_card_message(message_id: str, card_json: str) -> bool:
 def create_service_chat(
     chat_name: str,
     user_open_ids: list[str],
-) -> Optional[str]:
+) -> tuple[Optional[str], int, str]:
     """
     创建服务群并拉入指定用户
-    :param chat_name: 群名称
-    :param user_open_ids: 初始成员 open_id 列表（机器人自动加入，无需重复添加）
-    :return: 创建成功返回 chat_id，失败返回 None
+    :return: (chat_id, error_code, error_msg) 成功时 chat_id 有值且 error_code=0
     """
     client = get_client()
 
@@ -132,10 +130,10 @@ def create_service_chat(
         logger.error(
             f"创建群组失败: code={response.code}, msg={response.msg}"
         )
-        return None
+        return None, response.code, response.msg
     chat_id = response.data.chat_id
     logger.info(f"服务群创建成功: chat_id={chat_id}, name={chat_name}")
-    return chat_id
+    return chat_id, 0, ""
 
 
 def send_text_message(chat_id: str, text: str) -> Optional[str]:
@@ -163,3 +161,156 @@ def send_text_message(chat_id: str, text: str) -> Optional[str]:
         )
         return None
     return response.data.message_id
+
+
+# ── 获取群历史消息 ──────────────────────────────────────────
+
+def list_chat_messages(chat_id: str) -> list[dict]:
+    """
+    分页获取群聊全部历史消息（按时间升序）
+    :return: 消息列表，每条包含 sender_id, msg_type, content, create_time
+    """
+    from lark_oapi.api.im.v1 import ListMessageRequest
+
+    client = get_client()
+    all_messages = []
+    page_token = ""
+
+    while True:
+        req_builder = (
+            ListMessageRequest.builder()
+            .container_id_type("chat")
+            .container_id(chat_id)
+            .sort_type("ByCreateTimeAsc")
+            .page_size(50)
+        )
+        if page_token:
+            req_builder = req_builder.page_token(page_token)
+
+        request = req_builder.build()
+        response = client.im.v1.message.list(request)
+
+        if not response.success():
+            logger.error(
+                f"获取群消息失败: chat_id={chat_id}, "
+                f"code={response.code}, msg={response.msg}"
+            )
+            break
+
+        items = response.data.items or []
+        for item in items:
+            all_messages.append({
+                "sender_id": item.sender.id if item.sender else "",
+                "msg_type": item.msg_type or "",
+                "content": item.body.content if item.body else "",
+                "create_time": item.create_time or "",
+            })
+
+        if not response.data.has_more:
+            break
+        page_token = response.data.page_token or ""
+
+    logger.info(f"获取群消息完成: chat_id={chat_id}, 共 {len(all_messages)} 条")
+    return all_messages
+
+
+# ── 获取群信息 ──────────────────────────────────────────────
+
+def get_chat_info(chat_id: str) -> Optional[str]:
+    """
+    获取群聊名称
+    :return: 群名称，失败返回 None
+    """
+    from lark_oapi.api.im.v1 import GetChatRequest
+
+    client = get_client()
+    request = GetChatRequest.builder().chat_id(chat_id).build()
+    response = client.im.v1.chat.get(request)
+    if not response.success():
+        logger.error(f"获取群信息失败: code={response.code}, msg={response.msg}")
+        return None
+    return response.data.name if response.data else None
+
+
+# ── 多维表格写入 ──────────────────────────────────────────
+
+def create_bitable_record(app_token: str, table_id: str, fields: dict) -> bool:
+    """
+    向多维表格写入一行记录
+    :param fields: 字段名→值的 dict
+    :return: 是否成功
+    """
+    from lark_oapi.api.bitable.v1 import (
+        CreateAppTableRecordRequest,
+        AppTableRecord,
+    )
+
+    client = get_client()
+    record = AppTableRecord.builder().fields(fields).build()
+    request = (
+        CreateAppTableRecordRequest.builder()
+        .app_token(app_token)
+        .table_id(table_id)
+        .request_body(record)
+        .build()
+    )
+    response = client.bitable.v1.app_table_record.create(request)
+    if not response.success():
+        logger.error(
+            f"写入多维表格失败: code={response.code}, msg={response.msg}"
+        )
+        return False
+    logger.info("多维表格写入成功")
+    return True
+
+
+# ── 解散群聊 ──────────────────────────────────────────────
+
+def delete_chat(chat_id: str) -> bool:
+    """
+    解散群聊（机器人必须是群主或创建者）
+    """
+    from lark_oapi.api.im.v1 import DeleteChatRequest
+
+    client = get_client()
+    request = DeleteChatRequest.builder().chat_id(chat_id).build()
+    response = client.im.v1.chat.delete(request)
+    if not response.success():
+        logger.error(
+            f"解散群聊失败: chat_id={chat_id}, "
+            f"code={response.code}, msg={response.msg}"
+        )
+        return False
+    logger.info(f"群聊已解散: chat_id={chat_id}")
+    return True
+
+
+# ── 转发消息 ──────────────────────────────────────────────
+
+def forward_message(message_id: str, receive_id: str) -> bool:
+    """
+    转发已有消息到指定群聊（保留原始格式，包括图片/文件等）
+    """
+    from lark_oapi.api.im.v1 import ForwardMessageRequest, ForwardMessageRequestBody
+
+    client = get_client()
+    request = (
+        ForwardMessageRequest.builder()
+        .message_id(message_id)
+        .receive_id_type("chat_id")
+        .request_body(
+            ForwardMessageRequestBody.builder()
+            .receive_id(receive_id)
+            .build()
+        )
+        .build()
+    )
+    response = client.im.v1.message.forward(request)
+    if not response.success():
+        logger.error(
+            f"转发消息失败: message_id={message_id}, "
+            f"code={response.code}, msg={response.msg}"
+        )
+        return False
+    logger.info(f"消息转发成功: message_id={message_id} -> chat_id={receive_id}")
+    return True
