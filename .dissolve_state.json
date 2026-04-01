@@ -1,0 +1,32 @@
+{
+  "oc_2cc5f8531f7767d5940b5aa8fa1a7355": {
+    "created_at": 1775021759.1374097,
+    "last_message_time": 1775021759.1374097,
+    "state": "warned",
+    "warning_msg_id": "om_x100b53feb1e140a8c35e5e0e99c675b",
+    "warning_sent_at": 1775022066.3795958,
+    "countdown_start": null,
+    "countdown_msg_id": null,
+    "archive_done": false
+  },
+  "oc_326013ba589679b4d3ea4d563ca9c4ff": {
+    "created_at": 1775025038.6411805,
+    "last_message_time": 1775025038.6411805,
+    "state": "warned",
+    "warning_msg_id": "om_x100b53ff82aea8a4c292567d4a912a1",
+    "warning_sent_at": 1775025349.6519089,
+    "countdown_start": null,
+    "countdown_msg_id": null,
+    "archive_done": false
+  },
+  "oc_12eec2053090f8dedce819b900d83d5a": {
+    "created_at": 1775025564.1726801,
+    "last_message_time": 1775025564.1726801,
+    "state": "warned",
+    "warning_msg_id": "om_x100b53ffa2041cbcc3eef9073c1dfca",
+    "warning_sent_at": 1775025868.1138518,
+    "countdown_start": null,
+    "countdown_msg_id": null,
+    "archive_done": false
+  }
+}

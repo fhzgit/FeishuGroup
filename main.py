@@ -24,6 +24,7 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
 import config
 from handlers.message_handler import do_p2_im_message_receive_v1
 from handlers.card_handler import handle_card_action
+from handlers.auto_dissolve import start_idle_checker
 
 # ── 日志配置 ────────────────────────────────────────────────
 logging.basicConfig(
@@ -32,6 +33,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
+        logging.FileHandler("bot.log", encoding="utf-8"),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -42,7 +44,6 @@ _NO_EVENT_THRESHOLD = 20 * 60  # 20 分钟无事件则自动重启
 
 
 def _touch_event():
-    """每次收到业务事件时调用，更新时间戳"""
     global _last_event_time
     _last_event_time = time.time()
 
@@ -64,30 +65,62 @@ def _start_watchdog():
     logger.info(f"健康检测已启动（{_NO_EVENT_THRESHOLD//60} 分钟无事件自动重启）")
 
 
+def _start_env_watcher():
+    """监控 .env 文件变更，修改后自动热重启"""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(env_path):
+        logger.warning(f".env 文件不存在，跳过热重启监控: {env_path}")
+        return
+
+    last_mtime = os.path.getmtime(env_path)
+
+    def _watcher():
+        nonlocal last_mtime
+        while True:
+            time.sleep(2)  # 每 2 秒检查一次
+            try:
+                current_mtime = os.path.getmtime(env_path)
+                if current_mtime != last_mtime:
+                    last_mtime = current_mtime
+                    logger.info("检测到 .env 文件变更，2 秒后热重启...")
+                    time.sleep(2)  # 等待写入完成
+                    logger.info("正在热重启进程...")
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+            except Exception as e:
+                logger.error(f".env 监控异常: {e}")
+
+    t = threading.Thread(target=_watcher, daemon=True, name="env-watcher")
+    t.start()
+    logger.info(f".env 热重启监控已启动: {env_path}")
+
+
 # ── 卡片回调处理 ────────────────────────────────────────────
 def do_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
     """
     处理卡片交互事件（card.action.trigger）
-    必须在 3 秒内返回响应，实际创群逻辑在异步线程中执行
+    必须在 3 秒内返回响应，实际建群逻辑在异步线程中执行
     """
     try:
-        _touch_event()  # 更新健康检测时间戳
+        _touch_event()
         action_value = data.event.action.value or {}
         operator_open_id = data.event.operator.open_id or ""
-        # context.open_message_id 是机器人发出的卡片消息 ID，用于后续 patch
         context = data.event.context
         card_message_id = (context.open_message_id if context else "") or ""
-        logger.debug(f"卡片回调: operator={operator_open_id}, card_message_id={card_message_id}")
+
+        logger.debug(
+            f"卡片回调: operator={operator_open_id}, "
+            f"card_message_id={card_message_id}, value={action_value}"
+        )
+
         response_body = handle_card_action(action_value, operator_open_id, card_message_id)
 
         resp = P2CardActionTriggerResponse()
-        # 设置 toast 提示
         toast = CallBackToast()
         toast.type = response_body.get("toast", {}).get("type", "info")
         toast.content = response_body.get("toast", {}).get("content", "处理中...")
         resp.toast = toast
 
-        # 如果有 processing_card，立刻更新卡片 UI（避免按钮闪回原始可点状态）
+        # 立刻更新卡片为「处理中」状态，防止按钮闪回
         processing_card = response_body.get("processing_card")
         if processing_card:
             from lark_oapi.event.callback.model.p2_card_action_trigger import CallBackCard
@@ -97,6 +130,7 @@ def do_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerResp
             resp.card = card_resp
 
         return resp
+
     except Exception as e:
         logger.exception(f"卡片回调处理异常: {e}")
         resp = P2CardActionTriggerResponse()
@@ -107,32 +141,37 @@ def do_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerResp
         return resp
 
 
-# ── 消息事件处理（包装，更新健康检测时间戳）──────────────────
+# ── 消息事件处理 ──────────────────────────────────────────
 def _wrapped_message_handler(data: P2ImMessageReceiveV1) -> None:
     _touch_event()
-    do_p2_im_message_receive_v1(data)
+    # 异步处理消息，避免阻塞飞书 SDK 的 WebSocket 线程导致重复下发（重试）
+    threading.Thread(
+        target=do_p2_im_message_receive_v1,
+            args=(data,),
+        daemon=True,
+        name=f"MsgHandler-{data.header.event_id}"
+    ).start()
 
 
 def main():
-    # 启动前校验配置
     try:
         config.validate()
     except ValueError as e:
         logger.error(f"\n{'='*50}\n配置错误，程序退出：\n{e}\n{'='*50}")
         sys.exit(1)
 
-    logger.info("="*50)
+    logger.info("=" * 50)
     logger.info("飞书群机器人启动中...")
     logger.info(f"APP_ID: {config.APP_ID}")
-    logger.info(f"监听模式: {config.MONITOR_MODE}")
-    logger.info(f"负责人数量: {len(config.HANDLER_OPEN_IDS)} 人")
     logger.info(f"白名单群: {config.ALLOWED_CHAT_IDS or '全部'}")
-    logger.info("="*50)
+    for key, dept in config.DEPARTMENT_HANDLERS.items():
+        logger.info(f"  部门[{dept['name']}]: {len(dept['ids'])} 名负责人")
+    logger.info("=" * 50)
 
-    # 启动健康检测守护线程
-    _start_watchdog()
+    # _start_watchdog()  # 注释掉以防止 20 分钟死锁重启
+    _start_env_watcher()
+    start_idle_checker()
 
-    # 构建事件分发器
     event_handler = (
         lark.EventDispatcherHandler.builder(
             encrypt_key=config.CARD_ENCRYPT_KEY,
@@ -143,12 +182,11 @@ def main():
         .build()
     )
 
-    # 启动 WebSocket 长连接客户端
     ws_client = lark.ws.Client(
         app_id=config.APP_ID,
         app_secret=config.APP_SECRET,
         event_handler=event_handler,
-        log_level=lark.LogLevel.DEBUG if config.LOG_LEVEL == "DEBUG" else lark.LogLevel.INFO,
+        log_level=lark.LogLevel.DEBUG,  # 临时强制 DEBUG，查按钮事件
     )
 
     logger.info("WebSocket 长连接已启动，等待事件...")

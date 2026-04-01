@@ -39,25 +39,44 @@ def get_client() -> lark.Client:
 
 # ── 发送消息 ────────────────────────────────────────────────
 
-def send_card_message(chat_id: str, card_json: str) -> Optional[str]:
+def send_card_message(chat_id: str, card_json: str, reply_to_message_id: str = "") -> Optional[str]:
     """
     向指定群发送互动卡片消息
+    :param reply_to_message_id: 回复指定消息（用于话题群回复到同一话题）
     :return: 发送成功返回 message_id，失败返回 None
     """
     client = get_client()
-    request = (
-        CreateMessageRequest.builder()
-        .receive_id_type("chat_id")
-        .request_body(
-            CreateMessageRequestBody.builder()
-            .receive_id(chat_id)
-            .msg_type("interactive")
-            .content(card_json)
+
+    # 如果指定了 reply_to_message_id，使用 reply 接口（话题群回复到同一话题）
+    if reply_to_message_id:
+        from lark_oapi.api.im.v1 import ReplyMessageRequest, ReplyMessageRequestBody
+        request = (
+            ReplyMessageRequest.builder()
+            .message_id(reply_to_message_id)
+            .request_body(
+                ReplyMessageRequestBody.builder()
+                .msg_type("interactive")
+                .content(card_json)
+                .build()
+            )
             .build()
         )
-        .build()
-    )
-    response = client.im.v1.message.create(request)
+        response = client.im.v1.message.reply(request)
+    else:
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type("chat_id")
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("interactive")
+                .content(card_json)
+                .build()
+            )
+            .build()
+        )
+        response = client.im.v1.message.create(request)
+
     if not response.success():
         logger.error(
             f"发送卡片消息失败: code={response.code}, msg={response.msg}"
@@ -134,6 +153,36 @@ def create_service_chat(
     chat_id = response.data.chat_id
     logger.info(f"服务群创建成功: chat_id={chat_id}, name={chat_name}")
     return chat_id, 0, ""
+
+
+def add_chat_members(chat_id: str, user_open_ids: list[str]) -> bool:
+    """
+    将用户拉入已有群聊
+    :param chat_id:        群聊 ID
+    :param user_open_ids:  要拉入的用户 open_id 列表
+    :return: 是否成功
+    """
+    client = get_client()
+    from lark_oapi.api.im.v1 import CreateChatMembersRequest, CreateChatMembersRequestBody
+
+    unique_ids = list(dict.fromkeys(user_open_ids))
+    request = (
+        CreateChatMembersRequest.builder()
+        .chat_id(chat_id)
+        .member_id_type("open_id")
+        .request_body(
+            CreateChatMembersRequestBody.builder()
+            .id_list(unique_ids)
+            .build()
+        )
+        .build()
+    )
+    response = client.im.v1.chat_members.create(request)
+    if not response.success():
+        logger.error(f"拉人入群失败: chat_id={chat_id}, code={response.code}, msg={response.msg}")
+        return False
+    logger.info(f"拉人入群成功: chat_id={chat_id}, users={unique_ids}")
+    return True
 
 
 def send_text_message(chat_id: str, text: str) -> Optional[str]:

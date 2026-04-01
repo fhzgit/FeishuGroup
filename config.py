@@ -5,12 +5,10 @@
 import os
 from dotenv import load_dotenv
 
-# 加载 .env 文件
 load_dotenv()
 
 
 def _get_required(key: str) -> str:
-    """获取必填配置项，缺失时抛出异常"""
     value = os.getenv(key)
     if not value:
         raise ValueError(f"必填环境变量 [{key}] 未配置，请检查 .env 文件")
@@ -18,7 +16,6 @@ def _get_required(key: str) -> str:
 
 
 def _get_list(key: str, default: str = "") -> list[str]:
-    """获取逗号分隔的列表配置"""
     raw = os.getenv(key, default)
     return [item.strip() for item in raw.split(",") if item.strip()]
 
@@ -27,23 +24,11 @@ def _get_list(key: str, default: str = "") -> list[str]:
 APP_ID: str = _get_required("FEISHU_APP_ID")
 APP_SECRET: str = _get_required("FEISHU_APP_SECRET")
 
-# 卡片回调验证（Webhook 模式下需要，WebSocket 模式下可留空）
 CARD_VERIFICATION_TOKEN: str = os.getenv("FEISHU_CARD_VERIFICATION_TOKEN", "")
 CARD_ENCRYPT_KEY: str = os.getenv("FEISHU_CARD_ENCRYPT_KEY", "")
 
 # ── 业务配置 ──────────────────────────────────────────────
-# 负责人 open_id 列表（at 用户 + 创群后拉入）
-HANDLER_OPEN_IDS: list[str] = _get_list("HANDLER_OPEN_IDS")
-
-# 监听策略：all=所有消息，keyword=仅关键词触发
-MONITOR_MODE: str = os.getenv("MONITOR_MODE", "all").lower()
-
-# 关键词列表（MONITOR_MODE=keyword 时生效）
-QUESTION_KEYWORDS: list[str] = _get_list(
-    "QUESTION_KEYWORDS", "?,？,请问,咨询,帮忙,怎么,如何,问一下"
-)
-
-# 允许触发的群聊 ID 列表（为空则允许所有群）
+# 允许触发的群聊 ID（为空则允许所有群）
 ALLOWED_CHAT_IDS: list[str] = _get_list("ALLOWED_CHAT_IDS")
 
 # 服务群名称前缀
@@ -52,12 +37,36 @@ SERVICE_GROUP_PREFIX: str = os.getenv("SERVICE_GROUP_PREFIX", "服务群")
 # 日志级别
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
+# ── 按部门配置负责人 ──────────────────────────────────────
+# 每个部门读取对应环境变量，fallback 到 HANDLER_OPEN_IDS
+_fallback_ids: list[str] = _get_list("HANDLER_OPEN_IDS")
+
+DEPARTMENT_HANDLERS: dict = {
+    "product": {
+        "name": "产品咨询",
+        "icon": "🛠",
+        "ids": _get_list("DEPARTMENT_PRODUCT") or _fallback_ids,
+    },
+    "tech": {
+        "name": "技术支持",
+        "icon": "💻",
+        "ids": _get_list("DEPARTMENT_TECH") or _fallback_ids,
+    },
+    "business": {
+        "name": "商务合作",
+        "icon": "🤝",
+        "ids": _get_list("DEPARTMENT_BUSINESS") or _fallback_ids,
+    },
+    "finance": {
+        "name": "财务对账",
+        "icon": "💰",
+        "ids": _get_list("DEPARTMENT_FINANCE") or _fallback_ids,
+    },
+}
+
 # ── 归档功能配置 ──────────────────────────────────────────
-# 多维表格
 BITABLE_APP_TOKEN: str = os.getenv("BITABLE_APP_TOKEN", "")
 BITABLE_TABLE_ID: str = os.getenv("BITABLE_TABLE_ID", "")
-
-# 归档触发词
 RESOLVE_KEYWORDS: list[str] = _get_list(
     "RESOLVE_KEYWORDS", "问题已解决,已解决,问题解决"
 )
@@ -70,9 +79,10 @@ def validate():
         errors.append("FEISHU_APP_ID 未配置或仍为示例值")
     if not APP_SECRET or "xxx" in APP_SECRET:
         errors.append("FEISHU_APP_SECRET 未配置或仍为示例值")
-    if not HANDLER_OPEN_IDS:
-        errors.append("HANDLER_OPEN_IDS 未配置，机器人不知道要@谁")
-    if MONITOR_MODE not in ("all", "keyword"):
-        errors.append("MONITOR_MODE 仅支持 all 或 keyword")
+
+    all_ids = [id_ for dept in DEPARTMENT_HANDLERS.values() for id_ in dept["ids"]]
+    if not all_ids:
+        errors.append("所有部门负责人 open_id 均未配置，请检查 HANDLER_OPEN_IDS 或 DEPARTMENT_* 配置")
+
     if errors:
         raise ValueError("配置校验失败：\n" + "\n".join(f"  - {e}" for e in errors))
