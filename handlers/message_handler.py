@@ -56,22 +56,82 @@ def _is_already_processed(message_id: str) -> bool:
         return False
 
 
-def _extract_text(content_str: str) -> str:
-    """从消息内容 JSON 中提取纯文本"""
+def _extract_message_payload(content_str: str, msg_type: str) -> tuple[str, list[str], list[str]]:
+    """
+    从消息内容 JSON 中提取文本、图片 key 和文件 key。
+    支持 text/post/image/file 类型。
+    返回: (text, image_keys, file_keys)
+    """
+    text_parts: list[str] = []
+    image_keys: list[str] = []
+    file_keys: list[str] = []
+
     try:
-        content = json.loads(content_str)
-        if "text" in content:
-            return content["text"].strip()
-        if "content" in content:
-            texts = []
-            for line in content.get("content", []):
-                for seg in line:
-                    if seg.get("tag") == "text":
-                        texts.append(seg.get("text", ""))
-            return " ".join(texts).strip()
+        content = json.loads(content_str) if content_str else {}
     except Exception:
-        pass
-    return content_str
+        fallback_text = "" if msg_type in ("image", "file") else (content_str or "").strip()
+        return fallback_text, [], []
+
+    if not isinstance(content, dict):
+        fallback_text = "" if msg_type in ("image", "file") else (content_str or "").strip()
+        return fallback_text, [], []
+
+    # text 消息
+    if isinstance(content.get("text"), str):
+        text_parts.append(content["text"])
+
+    # image 消息（顶层 image_key）
+    top_image_key = content.get("image_key")
+    if isinstance(top_image_key, str) and top_image_key:
+        image_keys.append(top_image_key)
+
+    # file 消息（顶层 file_key，包括 txt/doc/pdf 等）
+    top_file_key = content.get("file_key")
+    if isinstance(top_file_key, str) and top_file_key:
+        file_keys.append(top_file_key)
+
+    # post 富文本消息（支持 text/img/file 混合）
+    rich_content = content.get("content")
+    if isinstance(rich_content, list):
+        for line in rich_content:
+            if not isinstance(line, list):
+                continue
+            for seg in line:
+                if not isinstance(seg, dict):
+                    continue
+                tag = seg.get("tag")
+                if tag == "text":
+                    seg_text = seg.get("text", "")
+                    if isinstance(seg_text, str) and seg_text:
+                        text_parts.append(seg_text)
+                elif tag == "img":
+                    image_key = seg.get("image_key", "")
+                    if isinstance(image_key, str) and image_key:
+                        image_keys.append(image_key)
+                elif tag == "file":
+                    file_key = seg.get("file_key", "")
+                    if isinstance(file_key, str) and file_key:
+                        file_keys.append(file_key)
+
+    # 兼容某些结构可能直接给 image_keys 列表
+    raw_image_keys = content.get("image_keys")
+    if isinstance(raw_image_keys, list):
+        for k in raw_image_keys:
+            if isinstance(k, str) and k:
+                image_keys.append(k)
+
+    # 去重（保留顺序）
+    def dedup(keys: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result = []
+        for k in keys:
+            if k not in seen:
+                result.append(k)
+                seen.add(k)
+        return result
+
+    text = " ".join(text_parts).strip()
+    return text, dedup(image_keys), dedup(file_keys)
 
 
 
@@ -100,7 +160,7 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
         message_id = message.message_id
         sender_open_id = sender.sender_id.open_id
         msg_type = message.message_type or "text"
-        msg_text = _extract_text(message.content)
+        msg_text, image_keys, file_keys = _extract_message_payload(message.content, msg_type)
 
         # ── 持久化去重：防止重启后飞书重放历史事件 ─────────
         if _is_already_processed(message_id):
@@ -132,7 +192,7 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
         logger.info(
             f"收到话题首条消息: chat_id={chat_id}, "
             f"message_id={message_id}, sender={sender_open_id}, "
-            f"type={msg_type}, content={msg_text[:50]}"
+            f"type={msg_type}, images={len(image_keys)}, files={len(file_keys)}, content={msg_text[:50]}"
         )
 
         # ── 白名单群过滤 ────────────────────────────────────
@@ -151,7 +211,37 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
         logger.info(f"占位卡片已发送: sent_msg_id={sent_msg_id}")
 
         # ── Step 2: 调用 Aily 获取真实回答（可能耗时 5-15s）──
-        ai_answer = ai_service.generate_answer(msg_text, msg_type)
+        ai_answer = ai_service.generate_answer(
+            question=msg_text,
+            msg_type=msg_type,
+            message_id=message_id,
+            image_keys=image_keys,
+            file_keys=file_keys,
+        )
+
+        # ── Step 2.5: 记录话题信息到多维表格（状态:无操作自动归档）──
+        stats_record_id = ""
+        if config.BITABLE_APP_TOKEN and config.BITABLE_STATS_TABLE_ID:
+            from datetime import datetime
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_ms = int(time.time() * 1000)
+            question_for_stats = msg_text.strip()
+            if image_keys:
+                image_hint = f"[含图片 {len(image_keys)} 张]"
+                question_for_stats = f"{question_for_stats} {image_hint}".strip() if question_for_stats else image_hint
+            fields = {
+                "话题消息ID": message_id,
+                "提问内容": question_for_stats[:1000],
+                "提问时间": now_str,
+                "所在群ID": chat_id,
+                "解决方式": "无操作自动归档",
+                "AI回答内容": ai_answer[:2000],
+                "记录时间": now_ms,
+            }
+            stats_record_id = feishu_api.create_bitable_record(
+                config.BITABLE_APP_TOKEN, config.BITABLE_STATS_TABLE_ID, fields
+            ) or ""
+            logger.info(f"多维表格统计已创建，record_id: {stats_record_id}")
 
         # ── Step 3: 用真实内容更新卡片 ────────────────────────
         card_json = card_builder.build_ai_reply_card(
@@ -160,9 +250,13 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
             origin_message_id=message_id,
             origin_chat_id=chat_id,
             departments=config.DEPARTMENT_HANDLERS,
+            stats_record_id=stats_record_id,
         )
-        feishu_api.update_card_message(sent_msg_id, card_json)
-        logger.info(f"AI 解答卡片已更新: sent_msg_id={sent_msg_id}")
+        updated = feishu_api.update_card_message(sent_msg_id, card_json)
+        if updated:
+            logger.info(f"AI 解答卡片已更新: sent_msg_id={sent_msg_id}")
+        else:
+            logger.error(f"AI 解答卡片更新失败: sent_msg_id={sent_msg_id}")
 
     except Exception as e:
         logger.exception(f"处理消息事件时发生异常: {e}")

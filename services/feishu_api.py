@@ -283,11 +283,11 @@ def get_chat_info(chat_id: str) -> Optional[str]:
 
 # ── 多维表格写入 ──────────────────────────────────────────
 
-def create_bitable_record(app_token: str, table_id: str, fields: dict) -> bool:
+def create_bitable_record(app_token: str, table_id: str, fields: dict) -> Optional[str]:
     """
     向多维表格写入一行记录
     :param fields: 字段名→值的 dict
-    :return: 是否成功
+    :return: 成功返回 record_id，失败返回 None
     """
     from lark_oapi.api.bitable.v1 import (
         CreateAppTableRecordRequest,
@@ -308,8 +308,36 @@ def create_bitable_record(app_token: str, table_id: str, fields: dict) -> bool:
         logger.error(
             f"写入多维表格失败: code={response.code}, msg={response.msg}"
         )
-        return False
+        return None
     logger.info("多维表格写入成功")
+    record_id = response.data.record.record_id if response.data and response.data.record else ""
+    return record_id
+
+def update_bitable_record(app_token: str, table_id: str, record_id: str, fields: dict) -> bool:
+    """
+    更新多维表格的已有记录
+    """
+    from lark_oapi.api.bitable.v1 import (
+        UpdateAppTableRecordRequest,
+        AppTableRecord,
+    )
+    client = get_client()
+    record = AppTableRecord.builder().fields(fields).build()
+    request = (
+        UpdateAppTableRecordRequest.builder()
+        .app_token(app_token)
+        .table_id(table_id)
+        .record_id(record_id)
+        .request_body(record)
+        .build()
+    )
+    response = client.bitable.v1.app_table_record.update(request)
+    if not response.success():
+        logger.error(
+            f"更新多维表格失败: code={response.code}, msg={response.msg}"
+        )
+        return False
+    logger.info(f"多维表格更新成功: record_id={record_id}")
     return True
 
 

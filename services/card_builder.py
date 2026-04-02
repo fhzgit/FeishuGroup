@@ -3,7 +3,43 @@
 负责构建三种卡片状态：初始态、处理中、已解决
 """
 import json
+import re
 from typing import Optional
+
+_AT_OPEN_TAG_PATTERN = re.compile(r"<at\b([^>]*)>", re.IGNORECASE)
+_AT_CLOSE_TAG_PATTERN = re.compile(r"</at>", re.IGNORECASE)
+_AT_ID_ATTR_PATTERN = re.compile(
+    r"\bid\s*=\s*(?:'([^']+)'|\"([^\"]+)\"|([^\s>]+))",
+    re.IGNORECASE,
+)
+_RAW_INTERNAL_AT_PATTERN = re.compile(
+    r"@(?:itw|ou|on|open)_[-a-zA-Z0-9_]+(?:[\u4e00-\u9fff]{0,12})?",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_ai_markdown(text: str) -> str:
+    """
+    清洗 AI 输出中的飞书 @ 标签，避免非法 id 导致卡片更新失败。
+    例如：<at id='itw_xxx'></at> / <at id=itw_xxx> -> @itw_xxx
+    """
+    if not text:
+        return ""
+
+    def _replace_open_tag(match: re.Match) -> str:
+        attrs = match.group(1) or ""
+        id_match = _AT_ID_ATTR_PATTERN.search(attrs)
+        if id_match:
+            at_id = next((g for g in id_match.groups() if g), "")
+            if at_id:
+                return f"@{at_id}"
+        return "@成员"
+
+    sanitized = _AT_OPEN_TAG_PATTERN.sub(_replace_open_tag, text)
+    sanitized = _AT_CLOSE_TAG_PATTERN.sub("", sanitized)
+    # 清除模型直接输出的内部人员标识，如 @itw_xxx、@ou_xxx
+    sanitized = _RAW_INTERNAL_AT_PATTERN.sub("@相关同事", sanitized)
+    return sanitized
 
 
 def _build_dept_buttons(
@@ -12,26 +48,30 @@ def _build_dept_buttons(
     origin_message_id: str,
     origin_chat_id: str,
     ai_answer_short: str,
+    stats_record_id: str = "",
 ) -> list[dict]:
     """生成部门按钮列表（纵向排列，兼容所有屏幕宽度）"""
     buttons = []
     for key in departments:
         dept = departments[key]
+        button_name = dept.get("button_name") or dept.get("name") or key
+        department_name = dept.get("name") or button_name
         callback_value = {
             "action": "create_service_group",
             "department": key,
-            "department_name": dept["name"],
-            "handler_open_ids": dept["ids"],
+            "department_name": department_name,
+            "handler_open_ids": dept.get("ids", []),
             "asker_open_id": asker_open_id,
             "origin_message_id": origin_message_id,
             "origin_chat_id": origin_chat_id,
             "ai_answer": ai_answer_short,
+            "stats_record_id": stats_record_id,
         }
         buttons.append({
             "tag": "button",
             "text": {
                 "tag": "plain_text",
-                "content": f"{dept['icon']}  {dept['name']}",
+                "content": f"{dept.get('icon', '🏢')}  {button_name}",
             },
             "type": "primary",
             "size": "medium",
@@ -74,13 +114,15 @@ def build_ai_reply_card(
     origin_message_id: str,
     origin_chat_id: str,
     departments: dict,
+    stats_record_id: str = "",
 ) -> str:
     """
     构建初始态卡片：AI 回答区 + 已解决按钮 + 部门按钮（schema 2.0）
     """
+    ai_answer = _sanitize_ai_markdown(ai_answer)
     ai_answer_short = ai_answer[:500]
     button_rows = _build_dept_buttons(
-        departments, asker_open_id, origin_message_id, origin_chat_id, ai_answer_short
+        departments, asker_open_id, origin_message_id, origin_chat_id, ai_answer_short, stats_record_id
     )
 
     card = {
@@ -111,6 +153,7 @@ def build_ai_reply_card(
                                 "ai_answer": ai_answer_short,
                                 "origin_message_id": origin_message_id,
                                 "origin_chat_id": origin_chat_id,
+                                "stats_record_id": stats_record_id,
                             },
                         }
                     ],
@@ -154,6 +197,7 @@ def build_ai_solved_card(ai_answer: str, operator_open_id: str) -> str:
     :param ai_answer:        AI 原始回答内容
     :param operator_open_id: 点击用户的 open_id
     """
+    ai_answer = _sanitize_ai_markdown(ai_answer)
     card = {
         "schema": "2.0",
         "config": {"wide_screen_mode": True, "update_multi": True},
@@ -188,6 +232,7 @@ def build_processing_card(ai_answer: str, department_name: str) -> dict:
     构建处理中态卡片（返回 dict，用于卡片 action 立即响应）
     移除所有按钮，显示正在建群提示
     """
+    ai_answer = _sanitize_ai_markdown(ai_answer)
     return {
         "schema": "2.0",
         "config": {"wide_screen_mode": True, "update_multi": True},
@@ -244,6 +289,7 @@ def build_done_card(
     :param origin_chat_id:     原始群 chat_id
     :return: 卡片 JSON 字符串
     """
+    ai_answer = _sanitize_ai_markdown(ai_answer)
     if error_msg:
         header_title = "❌ 服务群创建失败"
         header_subtitle = "请稍后重试或联系管理员"

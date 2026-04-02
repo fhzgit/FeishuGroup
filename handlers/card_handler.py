@@ -97,6 +97,18 @@ def handle_card_action(
         ai_answer = action_value.get("ai_answer", "")
 
         def _update_solved():
+            stats_record_id = action_value.get("stats_record_id", "")
+            if stats_record_id and config.BITABLE_APP_TOKEN and config.BITABLE_STATS_TABLE_ID:
+                feishu_api.update_bitable_record(
+                    config.BITABLE_APP_TOKEN,
+                    config.BITABLE_STATS_TABLE_ID,
+                    stats_record_id,
+                    {
+                        "解决方式": "AI自动解决",
+                        "操作人": operator_open_id,
+                    }
+                )
+
             solved_card = card_builder.build_ai_solved_card(
                 ai_answer=ai_answer,
                 operator_open_id=operator_open_id,
@@ -211,6 +223,7 @@ def _async_create_group(
     department_name: str = action_value.get("department_name", "客服")
     origin_message_id: str = action_value.get("origin_message_id", "")
     ai_answer: str = action_value.get("ai_answer", "")
+    stats_record_id: str = action_value.get("stats_record_id", "")
 
     logger.info(
         f"开始创建服务群: dept={department_name}, "
@@ -265,6 +278,19 @@ def _async_create_group(
             origin_chat_id=action_value.get("origin_chat_id", ""),
         )
         feishu_api.update_card_message(card_message_id, done_card)
+
+        # ── 4.5. 写入统计表 (人工介入) ────────────────────────
+        if stats_record_id and config.BITABLE_APP_TOKEN and config.BITABLE_STATS_TABLE_ID:
+            feishu_api.update_bitable_record(
+                config.BITABLE_APP_TOKEN,
+                config.BITABLE_STATS_TABLE_ID,
+                stats_record_id,
+                {
+                    "解决方式": "人工客服介入",
+                    "转入部门": department_name,
+                    "操作人": operator_open_id,
+                }
+            )
 
         # ── 5. 注册到自动解散追踪器 ──────────────────────────
         auto_dissolve.register_service_group(new_chat_id)
