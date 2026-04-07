@@ -1,0 +1,209 @@
+{
+  "schema": "2.0",
+  "config": {
+    "wide_screen_mode": true,
+    "update_multi": true
+  },
+  "header": {
+    "title": {
+      "tag": "plain_text",
+      "content": "智能解答"
+    },
+    "subtitle": {
+      "tag": "plain_text",
+      "content": "由 AI 自动生成 · 仅供参考"
+    },
+    "template": "indigo"
+  },
+  "body": {
+    "elements": [
+      {
+        "tag": "markdown",
+        "content": "#### 🔍 问题分析\n\n您好！根据您的问题，我整理了以下解答：\n\n---\n\n##### 📋 处理步骤\n\n1. **检查配置**：首先确认您的账号权限是否正常\n2. **重新登录**：退出后重新登录可解决大部分认证问题\n3. **清除缓存**：按 `Ctrl + Shift + Delete` 清除浏览器缓存\n4. **联系客服**：若以上步骤均无效，请点击下方按钮联系人工\n\n---\n\n##### ⚠️ 注意事项\n\n- 操作前请务必备份重要数据\n- 如涉及~~已废弃的旧版功能~~，建议升级到新版本\n- 遇到紧急问题可直接拨打服务热线：**400-xxx-xxxx**\n\n> 💡 以上为 AI 自动回答，仅供参考。如需人工协助，请点击下方对应板块按钮。"
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "background_style": "default",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "padding": "0px 16px 0px 16px",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "#### 🙋 联系人工客服\n\n如 AI 解答无法满足您的需求，请选择对应板块，机器人将自动为您建立专属服务群："
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "stretch",
+        "margin": "8px 0px 0px 0px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "padding": "0px 4px 0px 16px",
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "🛠  产品咨询"
+                },
+                "type": "primary",
+                "size": "medium",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "create_service_group",
+                      "department": "product",
+                      "department_name": "产品咨询",
+                      "handler_open_ids": [
+                        "{{handler_product}}"
+                      ],
+                      "asker_open_id": "{{asker_open_id}}",
+                      "origin_message_id": "{{origin_message_id}}",
+                      "origin_chat_id": "{{origin_chat_id}}",
+                      "ai_answer": "{{ai_answer}}"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "padding": "0px 16px 0px 4px",
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "💻  技术支持"
+                },
+                "type": "primary",
+                "size": "medium",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "create_service_group",
+                      "department": "tech",
+                      "department_name": "技术支持",
+                      "handler_open_ids": [
+                        "{{handler_tech}}"
+                      ],
+                      "asker_open_id": "{{asker_open_id}}",
+                      "origin_message_id": "{{origin_message_id}}",
+                      "origin_chat_id": "{{origin_chat_id}}",
+                      "ai_answer": "{{ai_answer}}"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "stretch",
+        "margin": "8px 0px 0px 0px",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "padding": "0px 4px 0px 16px",
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "🤝  商务合作"
+                },
+                "type": "primary",
+                "size": "medium",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "create_service_group",
+                      "department": "business",
+                      "department_name": "商务合作",
+                      "handler_open_ids": [
+                        "{{handler_business}}"
+                      ],
+                      "asker_open_id": "{{asker_open_id}}",
+                      "origin_message_id": "{{origin_message_id}}",
+                      "origin_chat_id": "{{origin_chat_id}}",
+                      "ai_answer": "{{ai_answer}}"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "padding": "0px 16px 0px 4px",
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "💰  财务对账"
+                },
+                "type": "primary",
+                "size": "medium",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "create_service_group",
+                      "department": "finance",
+                      "department_name": "财务对账",
+                      "handler_open_ids": [
+                        "{{handler_finance}}"
+                      ],
+                      "asker_open_id": "{{asker_open_id}}",
+                      "origin_message_id": "{{origin_message_id}}",
+                      "origin_chat_id": "{{origin_chat_id}}",
+                      "ai_answer": "{{ai_answer}}"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "markdown",
+        "content": "<font color='grey'>⚡ 点击按钮后，机器人将自动建群，并将您与对应板块负责人拉入群中，请稍候...</font>"
+      }
+    ]
+  }
+}
