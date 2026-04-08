@@ -14,7 +14,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 import lark_oapi as lark
-from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
+from lark_oapi.api.im.v1 import P2ImChatMemberBotAddedV1, P2ImMessageReceiveV1
 from lark_oapi.event.callback.model.p2_card_action_trigger import (
     P2CardActionTrigger,
     P2CardActionTriggerResponse,
@@ -22,6 +22,7 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
 )
 
 import config
+from handlers.chat_member_handler import do_p2_im_chat_member_bot_added_v1
 from handlers.message_handler import do_p2_im_message_receive_v1
 from handlers.card_handler import handle_card_action
 from handlers.auto_dissolve import start_idle_checker
@@ -153,6 +154,16 @@ def _wrapped_message_handler(data: P2ImMessageReceiveV1) -> None:
     ).start()
 
 
+def _wrapped_bot_added_handler(data: P2ImChatMemberBotAddedV1) -> None:
+    _touch_event()
+    threading.Thread(
+        target=do_p2_im_chat_member_bot_added_v1,
+        args=(data,),
+        daemon=True,
+        name=f"BotAdded-{data.header.event_id}"
+    ).start()
+
+
 def main():
     try:
         config.validate()
@@ -177,6 +188,7 @@ def main():
             encrypt_key=config.CARD_ENCRYPT_KEY,
             verification_token=config.CARD_VERIFICATION_TOKEN,
         )
+        .register_p2_im_chat_member_bot_added_v1(_wrapped_bot_added_handler)
         .register_p2_im_message_receive_v1(_wrapped_message_handler)
         .register_p2_card_action_trigger(do_card_action_trigger)
         .build()

@@ -24,6 +24,13 @@ def handle_resolve(chat_id: str, sender_open_id: str) -> None:
     """
     归档入口：在异步线程中执行归档流程
     """
+    if sender_open_id != "system_auto_dissolve":
+        from handlers.auto_dissolve import start_direct_dissolve
+
+        operator_name = f"<at id='{sender_open_id}'></at>" if sender_open_id else "相关同事"
+        start_direct_dissolve(chat_id, operator_name)
+        return
+
     with _lock:
         if chat_id in _archiving_chats:
             logger.info(f"群 {chat_id} 正在归档中，忽略重复请求")

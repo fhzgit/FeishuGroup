@@ -204,8 +204,11 @@ def _async_wait_and_add(
     with _lock:
         chat_id = _group_cache.get(cache_key)
     if chat_id:
-        feishu_api.add_chat_members(chat_id, [operator_open_id])
-        logger.info(f"等待建群完成后拉人成功: user={operator_open_id}, chat={chat_id}")
+        success = feishu_api.add_chat_members(chat_id, [operator_open_id])
+        if success:
+            logger.info(f"等待建群完成后拉人成功: user={operator_open_id}, chat={chat_id}")
+        else:
+            logger.error(f"等待建群完成后拉人失败: user={operator_open_id}, chat={chat_id}")
     else:
         logger.error(f"等待建群超时或失败: {cache_key}, user={operator_open_id}")
 

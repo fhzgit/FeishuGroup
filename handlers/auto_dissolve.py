@@ -18,16 +18,17 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+import config
 from services import feishu_api
 from handlers.resolve_handler import handle_resolve
 
 logger = logging.getLogger(__name__)
 
-# ── 时间配置（秒）─ 测试阶段用短时间 ──────────────────────
-IDLE_THRESHOLD = 5 * 60        # 空闲多久后发提醒（测试: 5分钟，生产: 30分钟）
-COUNTDOWN_DURATION = 1 * 60    # 已读后倒计时多久解散（测试: 1分钟，生产: 3分钟）
-FALLBACK_TIMEOUT = 24 * 3600   # 兜底：提醒发出后多久无操作直接解散（24小时）
-CHECK_INTERVAL = 30            # 检查间隔（秒）
+# ── 时间配置（秒）────────────────────────────────────────
+IDLE_THRESHOLD = config.AUTO_DISSOLVE_IDLE_SECONDS
+COUNTDOWN_DURATION = config.AUTO_DISSOLVE_COUNTDOWN_SECONDS
+FALLBACK_TIMEOUT = config.AUTO_DISSOLVE_FALLBACK_SECONDS
+CHECK_INTERVAL = config.AUTO_DISSOLVE_CHECK_INTERVAL_SECONDS
 
 # ── 持久化文件路径 ────────────────────────────────────────
 _STATE_FILE = os.path.join(
@@ -215,6 +216,47 @@ def on_dissolve_action(action: str, chat_id: str, operator_name: str, message_id
             feishu_api.update_card_message(message_id, card_json)
 
 
+def start_direct_dissolve(chat_id: str, operator_name: str) -> None:
+    """
+    直接进入“确认解散”后的流程：
+    不发送闲置提醒，直接展示归档中的卡片并启动归档+倒计时。
+    """
+    from services import card_builder
+
+    with _lock:
+        group = _groups.get(chat_id)
+        if not group:
+            logger.info(f"[AutoDissolve] 直接解散时未找到群状态，主动恢复: {chat_id}")
+            group = ServiceGroup(chat_id=chat_id)
+            _groups[chat_id] = group
+
+        if group.state in (GroupState.COUNTDOWN, GroupState.DISSOLVING):
+            logger.info(f"[AutoDissolve] 群 {chat_id} 已在解散流程中，忽略重复触发")
+            return
+
+        group.state = GroupState.COUNTDOWN
+        group.countdown_start = time.time()
+        group.warning_sent_at = None
+        group.archive_done = False
+        _save_state()
+
+    archiving_card = card_builder.build_idle_countdown_card(0, operator_name, archiving=True)
+    card_message_id = feishu_api.send_card_message(chat_id, archiving_card) or ""
+
+    with _lock:
+        latest_group = _groups.get(chat_id)
+        if latest_group:
+            latest_group.warning_msg_id = card_message_id
+            _save_state()
+
+    threading.Thread(
+        target=_async_archive_and_update,
+        args=(chat_id, card_message_id, operator_name),
+        daemon=True,
+        name=f"DirectDissolve-{chat_id}",
+    ).start()
+
+
 def _async_archive_and_update(chat_id: str, warning_msg_id: str, operator_name: str) -> None:
     """异步归档并实时更新卡片。用于用户点击『确认解散』后立即触发。"""
     from services import card_builder
@@ -258,12 +300,17 @@ def _async_archive_and_update(chat_id: str, warning_msg_id: str, operator_name: 
         card_json = card_builder.build_idle_countdown_card(
             minutes, operator_name, archiving=False, msg_count=msg_count
         )
-        feishu_api.update_card_message(warning_msg_id, card_json)
+        if warning_msg_id:
+            feishu_api.update_card_message(warning_msg_id, card_json)
+        else:
+            warning_msg_id = feishu_api.send_card_message(chat_id, card_json) or ""
         logger.info(f"[AutoDissolve] 归档完成，卡片已更新: {msg_count} 条记录")
         # 标记归档已完成
         with _lock:
             g = _groups.get(chat_id)
             if g:
+                if warning_msg_id and not g.warning_msg_id:
+                    g.warning_msg_id = warning_msg_id
                 g.archive_done = True
                 _save_state()
 

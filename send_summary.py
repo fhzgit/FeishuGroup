@@ -1,18 +1,17 @@
 import json
+import logging
 import os
-from dotenv import load_dotenv
-import lark_oapi as lark
-from lark_oapi.api.im.v1 import (
-    CreateMessageRequest,
-    CreateMessageRequestBody,
-)
+import threading
+from typing import Optional
 
-load_dotenv()
-APP_ID = os.environ.get("FEISHU_APP_ID")
-APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
-client = lark.Client.builder().app_id(APP_ID).app_secret(APP_SECRET).build()
+from services import feishu_api
 
-card_dict = {
+logger = logging.getLogger(__name__)
+_SENT_CHATS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".summary_sent_chats.json")
+_sent_chats_lock = threading.Lock()
+
+
+SUMMARY_CARD = {
   "schema": "2.0",
   "config": {
     "update_multi": True,
@@ -60,18 +59,44 @@ card_dict = {
   }
 }
 
-req = CreateMessageRequest.builder() \
-    .receive_id_type("chat_id") \
-    .request_body(
-        CreateMessageRequestBody.builder()
-        .receive_id("oc_6fff1a09ad0315f0d77d516621a4e6ee")
-        .msg_type("interactive")
-        .content(json.dumps(card_dict))
-        .build()
-    ).build()
+def send_summary_card(chat_id: str) -> Optional[str]:
+    """向指定群发送使用说明卡片。"""
+    return feishu_api.send_card_message(
+        chat_id,
+        json.dumps(SUMMARY_CARD, ensure_ascii=False),
+    )
 
-resp = client.im.v1.message.create(req)
-if resp.success():
-    print(f"✅ 发送成功 message_id: {resp.data.message_id}")
-else:
-    print(f"❌ 发送失败 ({resp.code}): {resp.msg}")
+
+def _load_sent_chats() -> set[str]:
+    try:
+        if os.path.exists(_SENT_CHATS_FILE):
+            with open(_SENT_CHATS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return {item for item in data if isinstance(item, str) and item}
+    except Exception as e:
+        logger.warning(f"摘要卡片发送记录加载失败: {e}")
+    return set()
+
+
+def _save_sent_chats(chat_ids: set[str]) -> None:
+    try:
+        with open(_SENT_CHATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(chat_ids), f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"摘要卡片发送记录保存失败: {e}")
+
+
+def send_summary_card_once(chat_id: str) -> Optional[str]:
+    """同一个群只发送一次使用说明卡片。"""
+    with _sent_chats_lock:
+        sent_chats = _load_sent_chats()
+        if chat_id in sent_chats:
+            logger.info(f"摘要卡片已发送过，跳过: chat_id={chat_id}")
+            return None
+
+        message_id = send_summary_card(chat_id)
+        if message_id:
+            sent_chats.add(chat_id)
+            _save_sent_chats(sent_chats)
+        return message_id

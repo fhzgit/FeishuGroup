@@ -21,18 +21,10 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# ── Aily 配置（直接写在这里方便测试，后续可移入 .env）──────
-AILY_APP_ID = "cli_a92f882f35b89bd9"
-AILY_APP_SECRET = "d7fECgvDkAZlwFLtjiDXfdaSniv1AXKv"
-AILY_BOT_ID = "spring_49c68ad746__c"
-
-HOST = "https://open.feishu.cn"
-REQUEST_TIMEOUT = 20
-
 
 def _get_tenant_access_token(app_id: str, app_secret: str, label: str) -> str:
     """获取指定应用的 Tenant Access Token"""
-    url = f"{HOST}/open-apis/auth/v3/tenant_access_token/internal"
+    url = f"{config.AILY_HOST}/open-apis/auth/v3/tenant_access_token/internal"
     try:
         resp = requests.post(
             url,
@@ -40,7 +32,7 @@ def _get_tenant_access_token(app_id: str, app_secret: str, label: str) -> str:
                 "app_id": app_id,
                 "app_secret": app_secret,
             },
-            timeout=REQUEST_TIMEOUT,
+            timeout=config.AILY_REQUEST_TIMEOUT,
         )
     except Exception as e:
         logger.error(f"获取 {label} TAT 异常: {e}")
@@ -61,7 +53,7 @@ def _get_tenant_access_token(app_id: str, app_secret: str, label: str) -> str:
 
 
 def _get_aily_tenant_access_token() -> str:
-    return _get_tenant_access_token(AILY_APP_ID, AILY_APP_SECRET, "Aily")
+    return _get_tenant_access_token(config.AILY_APP_ID, config.AILY_APP_SECRET, "Aily")
 
 
 def _get_bot_tenant_access_token() -> str:
@@ -77,13 +69,13 @@ def _download_image_from_message(message_id: str, image_key: str) -> bytes:
     if not token:
         return b""
 
-    url = f"{HOST}/open-apis/im/v1/messages/{message_id}/resources/{image_key}"
+    url = f"{config.AILY_HOST}/open-apis/im/v1/messages/{message_id}/resources/{image_key}"
     try:
         resp = requests.get(
             url,
             headers={"Authorization": f"Bearer {token}"},
             params={"type": "image"},
-            timeout=REQUEST_TIMEOUT,
+            timeout=config.AILY_REQUEST_TIMEOUT,
         )
     except Exception as e:
         logger.error(f"下载图片失败（请求异常）: message_id={message_id}, image_key={image_key}, err={e}")
@@ -118,13 +110,13 @@ def _download_file_from_message(message_id: str, file_key: str) -> tuple[bytes, 
     if not token:
         return b"", ""
 
-    url = f"{HOST}/open-apis/im/v1/messages/{message_id}/resources/{file_key}"
+    url = f"{config.AILY_HOST}/open-apis/im/v1/messages/{message_id}/resources/{file_key}"
     try:
         resp = requests.get(
             url,
             headers={"Authorization": f"Bearer {token}"},
             params={"type": "file"},
-            timeout=REQUEST_TIMEOUT,
+            timeout=config.AILY_REQUEST_TIMEOUT,
         )
     except Exception as e:
         logger.error(f"下载文件失败: message_id={message_id}, file_key={file_key}, err={e}")
@@ -161,12 +153,17 @@ def _upload_aily_file(file_content: bytes, file_name: str, mime_type: str = "ima
     if not token:
         return "", ""
 
-    url = f"{HOST}/open-apis/aily/v1/files"
+    url = f"{config.AILY_HOST}/open-apis/aily/v1/files"
     headers = {"Authorization": f"Bearer {token}"}
     files = {"file": (file_name, file_content, mime_type)}
 
     try:
-        resp = requests.post(url, headers=headers, files=files, timeout=REQUEST_TIMEOUT)
+        resp = requests.post(
+            url,
+            headers=headers,
+            files=files,
+            timeout=config.AILY_REQUEST_TIMEOUT,
+        )
     except Exception as e:
         logger.warning(f"Aily 文件上传请求失败: {e}")
         return "", ""
@@ -311,9 +308,9 @@ def _call_aily(question: str, file_objects: list[dict] | None = None) -> str:
 
     # ── 1. 创建会话 ──────────────────────────────────────
     resp = requests.post(
-        f"{HOST}/open-apis/aily/v1/sessions",
+        f"{config.AILY_HOST}/open-apis/aily/v1/sessions",
         headers=headers,
-        timeout=REQUEST_TIMEOUT,
+        timeout=config.AILY_REQUEST_TIMEOUT,
     )
     data = resp.json()
     logger.info(f"CreateSession 响应: code={data.get('code')}")
@@ -335,10 +332,10 @@ def _call_aily(question: str, file_objects: list[dict] | None = None) -> str:
         logger.info(f"多模态消息: file_ids={file_ids}, content={content[:80]}")
 
     resp = requests.post(
-        f"{HOST}/open-apis/aily/v1/sessions/{session_id}/messages",
+        f"{config.AILY_HOST}/open-apis/aily/v1/sessions/{session_id}/messages",
         headers=headers,
         json=message_payload,
-        timeout=REQUEST_TIMEOUT,
+        timeout=config.AILY_REQUEST_TIMEOUT,
     )
     data = resp.json()
     logger.info(f"CreateMessage 响应: code={data.get('code')}")
@@ -350,10 +347,10 @@ def _call_aily(question: str, file_objects: list[dict] | None = None) -> str:
 
     # ── 3. 触发 Bot 执行 ─────────────────────────────────
     resp = requests.post(
-        f"{HOST}/open-apis/aily/v1/sessions/{session_id}/runs",
+        f"{config.AILY_HOST}/open-apis/aily/v1/sessions/{session_id}/runs",
         headers=headers,
-        json={"app_id": AILY_BOT_ID},
-        timeout=REQUEST_TIMEOUT,
+        json={"app_id": config.AILY_BOT_ID},
+        timeout=config.AILY_REQUEST_TIMEOUT,
     )
     data = resp.json()
     logger.info(f"CreateRun 响应: code={data.get('code')}")
@@ -370,9 +367,9 @@ def _call_aily(question: str, file_objects: list[dict] | None = None) -> str:
 
         # 4.1 获取 Run 状态
         resp = requests.get(
-            f"{HOST}/open-apis/aily/v1/sessions/{session_id}/runs/{run_id}",
+            f"{config.AILY_HOST}/open-apis/aily/v1/sessions/{session_id}/runs/{run_id}",
             headers=headers,
-            timeout=REQUEST_TIMEOUT,
+            timeout=config.AILY_REQUEST_TIMEOUT,
         )
         run_data = resp.json()
         if run_data.get("code") != 0:
@@ -384,13 +381,13 @@ def _call_aily(question: str, file_objects: list[dict] | None = None) -> str:
         if status == "IN_PROGRESS":
             # 4.2 获取流式消息
             resp = requests.get(
-                f"{HOST}/open-apis/aily/v1/sessions/{session_id}/messages",
+                f"{config.AILY_HOST}/open-apis/aily/v1/sessions/{session_id}/messages",
                 headers=headers,
                 params={
                     "run_id": run_id,
                     "with_partial_message": "true",
                 },
-                timeout=REQUEST_TIMEOUT,
+                timeout=config.AILY_REQUEST_TIMEOUT,
             )
             msg_data = resp.json()
             if msg_data.get("code") == 0:
@@ -403,10 +400,10 @@ def _call_aily(question: str, file_objects: list[dict] | None = None) -> str:
         elif status == "COMPLETED":
             # 执行完成，获取最终消息
             resp = requests.get(
-                f"{HOST}/open-apis/aily/v1/sessions/{session_id}/messages",
+                f"{config.AILY_HOST}/open-apis/aily/v1/sessions/{session_id}/messages",
                 headers=headers,
                 params={"run_id": run_id},
-                timeout=REQUEST_TIMEOUT,
+                timeout=config.AILY_REQUEST_TIMEOUT,
             )
             msg_data = resp.json()
             if msg_data.get("code") == 0:

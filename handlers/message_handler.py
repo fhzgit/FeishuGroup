@@ -134,6 +134,15 @@ def _extract_message_payload(content_str: str, msg_type: str) -> tuple[str, list
     return text, dedup(image_keys), dedup(file_keys)
 
 
+def _is_bot_mentioned(message: object) -> bool:
+    """
+    当前手动归档依赖“@机器人 + 关键词”触发。
+    飞书消息事件里机器人被 @ 时会带上 mentions，因此这里按 mentions 是否存在判断。
+    """
+    mentions = getattr(message, "mentions", None) or []
+    return bool(mentions)
+
+
 
 
 def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
@@ -169,15 +178,15 @@ def do_p2_im_message_receive_v1(data: P2ImMessageReceiveV1) -> None:
 
         # ── 服务群消息追踪（更新自动解散计时器）────────────
         from handlers.auto_dissolve import is_tracked_group, on_message_received
-        if is_tracked_group(chat_id):
+        is_service_group = is_tracked_group(chat_id)
+        if is_service_group:
             on_message_received(chat_id)
             logger.debug(f"服务群消息已追踪: chat_id={chat_id}")
 
-        # ── 归档触发检测（优先于所有过滤，任意群消息均可触发）──
+        # ── 归档触发检测（优先于所有过滤，仅服务群里 @机器人 + 关键词）──
         # 服务群中 @机器人 + 归档触发词 → 启动归档流程
-        mentions = message.mentions or []
         has_resolve_keyword = any(kw in msg_text for kw in config.RESOLVE_KEYWORDS)
-        if has_resolve_keyword and mentions:
+        if is_service_group and has_resolve_keyword and _is_bot_mentioned(message):
             logger.info(f"检测到归档触发词: chat_id={chat_id}, sender={sender_open_id}")
             handle_resolve(chat_id, sender_open_id)
             return

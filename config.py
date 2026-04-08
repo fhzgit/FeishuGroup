@@ -22,6 +22,16 @@ def _get_list(key: str, default: str = "") -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _get_int(key: str, default: int) -> int:
+    raw = os.getenv(key, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"环境变量 [{key}] 必须是整数，当前值: {raw}") from exc
+
+
 def _dedupe_keep_order(items: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -196,6 +206,13 @@ APP_SECRET: str = _get_required("FEISHU_APP_SECRET")
 CARD_VERIFICATION_TOKEN: str = os.getenv("FEISHU_CARD_VERIFICATION_TOKEN", "")
 CARD_ENCRYPT_KEY: str = os.getenv("FEISHU_CARD_ENCRYPT_KEY", "")
 
+# ── Aily 配置 ─────────────────────────────────────────────
+AILY_APP_ID: str = _get_required("AILY_APP_ID")
+AILY_APP_SECRET: str = _get_required("AILY_APP_SECRET")
+AILY_BOT_ID: str = _get_required("AILY_BOT_ID")
+AILY_HOST: str = os.getenv("AILY_HOST", "https://open.feishu.cn").rstrip("/")
+AILY_REQUEST_TIMEOUT: int = _get_int("AILY_REQUEST_TIMEOUT", 20)
+
 # ── 业务配置 ──────────────────────────────────────────────
 # 允许触发的群聊 ID（为空则允许所有群）
 ALLOWED_CHAT_IDS: list[str] = _get_list("ALLOWED_CHAT_IDS")
@@ -237,6 +254,12 @@ BITABLE_STATS_TABLE_ID: str = os.getenv("BITABLE_STATS_TABLE_ID", "")
 RESOLVE_KEYWORDS: list[str] = _get_list(
     "RESOLVE_KEYWORDS", "问题已解决,已解决,问题解决"
 )
+AUTO_DISSOLVE_IDLE_SECONDS: int = _get_int("AUTO_DISSOLVE_IDLE_SECONDS", 5 * 60)
+AUTO_DISSOLVE_COUNTDOWN_SECONDS: int = _get_int("AUTO_DISSOLVE_COUNTDOWN_SECONDS", 1 * 60)
+AUTO_DISSOLVE_FALLBACK_SECONDS: int = _get_int("AUTO_DISSOLVE_FALLBACK_SECONDS", 24 * 3600)
+AUTO_DISSOLVE_CHECK_INTERVAL_SECONDS: int = _get_int(
+    "AUTO_DISSOLVE_CHECK_INTERVAL_SECONDS", 30
+)
 
 
 def validate():
@@ -246,6 +269,24 @@ def validate():
         errors.append("FEISHU_APP_ID 未配置或仍为示例值")
     if not APP_SECRET or "xxx" in APP_SECRET:
         errors.append("FEISHU_APP_SECRET 未配置或仍为示例值")
+    if not AILY_APP_ID or AILY_APP_ID.startswith("cli_xxx"):
+        errors.append("AILY_APP_ID 未配置或仍为示例值")
+    if not AILY_APP_SECRET or "xxx" in AILY_APP_SECRET:
+        errors.append("AILY_APP_SECRET 未配置或仍为示例值")
+    if not AILY_BOT_ID or "xxx" in AILY_BOT_ID:
+        errors.append("AILY_BOT_ID 未配置或仍为示例值")
+    if not AILY_HOST.startswith("http"):
+        errors.append("AILY_HOST 必须是有效的 HTTP/HTTPS 地址")
+    if AILY_REQUEST_TIMEOUT <= 0:
+        errors.append("AILY_REQUEST_TIMEOUT 必须大于 0")
+    if AUTO_DISSOLVE_IDLE_SECONDS <= 0:
+        errors.append("AUTO_DISSOLVE_IDLE_SECONDS 必须大于 0")
+    if AUTO_DISSOLVE_COUNTDOWN_SECONDS <= 0:
+        errors.append("AUTO_DISSOLVE_COUNTDOWN_SECONDS 必须大于 0")
+    if AUTO_DISSOLVE_FALLBACK_SECONDS <= 0:
+        errors.append("AUTO_DISSOLVE_FALLBACK_SECONDS 必须大于 0")
+    if AUTO_DISSOLVE_CHECK_INTERVAL_SECONDS <= 0:
+        errors.append("AUTO_DISSOLVE_CHECK_INTERVAL_SECONDS 必须大于 0")
 
     for key, dept in DEPARTMENT_HANDLERS.items():
         if not dept.get("name"):

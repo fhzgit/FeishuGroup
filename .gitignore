@@ -1,5 +1,9 @@
 # 敏感配置（绝对不能提交）
 .env
+.group_cache.json
+.processed_msgs
+.summary_sent_chats.json
+.dissolve_state.json
 
 # Python 缓存
 __pycache__/
@@ -20,6 +24,9 @@ env/
 
 # 日志
 *.log
+
+# 本地产物 / 历史快照
+dist/
 
 # 系统文件
 .DS_Store
